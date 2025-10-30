@@ -1,8 +1,8 @@
 import streamlit as st
-import pandas as pd  # Keep pandas for the final summary display
+import pandas as pd
 from pathlib import Path
 import uuid
-from supabase import create_client, Client # Added for Supabase
+from supabase import create_client, Client
 
 # --- Configuration ---
 # The app will look for audio files in this folder.
@@ -53,22 +53,52 @@ def save_rating_to_supabase(supabase: Client, user_id, audio_file, rating):
             "rating": rating
         }).execute()
         
-        # Check if the response indicates success
-        # When using execute(), a successful insert will return data
         return True
     except Exception as e:
         st.error(f"An unexpected error occurred: {e}")
         return False
 
-# --- New function to get all ratings from Supabase ---
 def get_all_ratings(supabase: Client):
-    """Fetches all ratings from the database for display."""
+    """Fetches all ratings from the database."""
     try:
-        response = supabase.table("mos_ratings").select("*").order("created_at", desc=True).execute()
+        response = supabase.table("mos_ratings").select("*").execute()
         return pd.DataFrame(response.data)
     except Exception as e:
         st.error(f"An unexpected error occurred while fetching data: {e}")
         return pd.DataFrame()
+
+def update_mos_summary(supabase: Client):
+    """Calculate and update the MOS summary table."""
+    try:
+        # Get all ratings
+        df = get_all_ratings(supabase)
+        
+        if df.empty:
+            return False
+        
+        # Calculate MOS for each audio file
+        mos_summary = df.groupby('audio_file').agg({
+            'rating': ['mean', 'count']
+        }).reset_index()
+        
+        mos_summary.columns = ['audio_file', 'mos_score', 'rating_count']
+        
+        # Clear existing summary data and insert new calculations
+        # Delete all existing records
+        supabase.table("mos_summary").delete().neq('audio_file', '').execute()
+        
+        # Insert updated summary
+        for _, row in mos_summary.iterrows():
+            supabase.table("mos_summary").insert({
+                "audio_file": row['audio_file'],
+                "mos_score": float(row['mos_score']),
+                "rating_count": int(row['rating_count'])
+            }).execute()
+        
+        return True
+    except Exception as e:
+        st.error(f"Error updating MOS summary: {e}")
+        return False
 
 # --- Streamlit App UI ---
 
@@ -111,23 +141,8 @@ def main():
     if st.session_state.ratings_submitted:
         st.success("🎉 Thank you! You have rated all available audio files.")
         st.balloons()
-        
-        # Optionally show the results
-        if st.checkbox("Show All Submitted Ratings & MOS Score"):
-            df = get_all_ratings(supabase)
-            if not df.empty:
-                st.subheader("All Raw Ratings")
-                st.dataframe(df)
-                
-                st.subheader("Current MOS Summary")
-                # Calculate and display MOS on the fly
-                mos_df = df.groupby('audio_file')['rating'].mean().reset_index()
-                mos_df = mos_df.rename(columns={'rating': 'MOS'})
-                st.dataframe(mos_df)
-            else:
-                st.info("No ratings have been submitted yet.")
+        st.info("Your ratings have been saved. You may close this page.")
         st.stop()
-
 
     # Get the current file to rate
     current_file_name = audio_files[st.session_state.current_audio_index]
@@ -172,6 +187,9 @@ def main():
         )
         
         if success:
+            # Update the MOS summary table
+            update_mos_summary(supabase)
+            
             st.toast(
                 f"Rating for '{current_file_name}' saved!",
                 icon="✅"
@@ -185,7 +203,6 @@ def main():
             
             st.rerun()
         else:
-            # Error was already shown by save_rating_to_supabase
             st.toast("Failed to save rating.", icon="❌")
 
 
