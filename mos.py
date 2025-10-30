@@ -3,19 +3,22 @@ import pandas as pd
 from pathlib import Path
 import csv
 import os
-import uuid  # Added for automatic user ID generation
+import uuid
+# <--- MODIFIED: Import the connection class --->
+from gsheetsdb import GSheetsDBConnection
 
 # --- Configuration ---
 # The app will look for audio files in this folder.
-# You MUST create this folder in the same directory as the app.
 AUDIO_FOLDER = Path("audio_files")
 
-# This is where the ratings will be saved.
-RATINGS_FILE = Path("mos_ratings.csv")
+# <--- MODIFIED: No longer need local CSV files for ratings --->
+# RATINGS_FILE = Path("mos_ratings.csv") 
+MOS_SUMMARY_FILE = Path("mos_summary.csv") # We still create this locally for download
 
-# --- New file for the MOS summary ---
-MOS_SUMMARY_FILE = Path("mos_summary.csv")
-# ---
+# <--- MODIFIED: Add your Google Sheet details here --->
+# This must be the full URL of your Google Sheet
+GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID_HERE/edit"
+WORKSHEET_NAME = "Ratings" # The name of the tab you created
 
 # The 5-point MOS scale
 RATING_SCALE = {
@@ -25,23 +28,22 @@ RATING_SCALE = {
     "4: Good": 4,
     "5: Excellent": 5
 }
-CSV_HEADER = ["user_id", "audio_file", "rating"]
+CSV_HEADER = ["user_id", "audio_file", "rating"] # Still used for the DataFrame
+
+# <--- MODIFIED: Connect to Google Sheets using st.connection --->
+# This uses the secrets from your .streamlit/secrets.toml file
+conn = st.connection("gsheets", type=GSheetsDBConnection, sheet_url=GOOGLE_SHEET_URL)
+
 
 # --- Helper Functions ---
 
 def setup_files():
-    """Create the audio folder and ratings CSV if they don't exist."""
+    """Create the audio folder if it doesn't exist."""
     # Create the audio folder if it's missing
     AUDIO_FOLDER.mkdir(exist_ok=True)
     
-    # Create the CSV file with a header if it's missing
-    if not RATINGS_FILE.exists():
-        with open(RATINGS_FILE, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(CSV_HEADER)
-    
-    # Note: We don't need to create the summary file; 
-    # it will be created/overwritten by the update function.
+    # <--- MODIFIED: No need to create CSV files anymore --->
+    # The Google Sheet must be set up manually (see Step 1)
 
 def get_audio_files():
     """Get a sorted list of supported audio files from the folder."""
@@ -53,47 +55,58 @@ def get_audio_files():
     files.sort()  # Ensure a consistent order for all users
     return files
 
-# --- New function to calculate and save the MOS summary ---
 def update_mos_summary():
     """
-    Reads all ratings from the main CSV file, calculates the
-    current MOS for each file, and saves it to a summary CSV.
-    This file is overwritten each time to keep it up-to-date.
+    Reads all ratings from GOOGLE SHEETS, calculates the
+    current MOS, and saves it to a LOCAL summary CSV for download.
     """
     try:
-        # Read all the ratings
-        df = pd.read_csv(RATINGS_FILE)
+        # <--- MODIFIED: Read from Google Sheets, not a local CSV --->
+        df = conn.read(worksheet=WORKSHEET_NAME, usecols=[0, 1, 2])
+        
+        # Ensure 'rating' column is numeric, handling potential errors
+        df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
+        df = df.dropna(subset=['rating']) # Drop rows where rating wasn't a number
         
         if df.empty:
-            # Don't create an empty summary file
             return
 
         # Calculate MOS per file
-        # Group by file and calculate the mean of the 'rating' column
         mos_df = df.groupby('audio_file')['rating'].mean().reset_index()
         mos_df = mos_df.rename(columns={'rating': 'MOS'})
         
-        # Save the summary, overwriting the file
+        # Save the summary LOCALLY for the download button
         mos_df.to_csv(MOS_SUMMARY_FILE, index=False, encoding='utf-8')
         
-    except pd.errors.EmptyDataError:
-        # This can happen if the file was just created and is empty
-        pass
     except Exception as e:
-        # Log this error to the console for the admin
-        print(f"Error updating MOS summary: {e}")
-# ---
+        st.error(f"Error updating MOS summary: {e}")
+        # This can happen if the sheet is empty or headers are wrong
+        pass
 
 def save_rating(user_id, audio_file, rating):
-    """Append a new rating to the CSV file and update the MOS summary."""
-    # 'a' mode means 'append'
-    with open(RATINGS_FILE, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow([user_id, audio_file, rating])
+    """Append a new rating to the GOOGLE SHEET and update the summary."""
     
-    # --- After saving, trigger the summary update ---
-    update_mos_summary()
-    # ---
+    # <--- MODIFIED: Append data to Google Sheets --->
+    try:
+        # Create a DataFrame for the new row
+        new_data = pd.DataFrame(
+            [[user_id, audio_file, rating]],
+            columns=CSV_HEADER
+        )
+        
+        # 'update' in this context means appending the new rows
+        conn.update(
+            worksheet=WORKSHEET_NAME,
+            data=new_data
+        )
+        
+        # After saving, trigger the summary update
+        update_mos_summary()
+        
+    except Exception as e:
+        st.error(f"Failed to save rating to Google Sheets: {e}")
+        st.warning("Please check your Google Sheet permissions and setup.")
+
 
 # --- Streamlit App UI ---
 
@@ -101,7 +114,7 @@ def main():
     st.set_page_config(layout="wide", page_title="MOS Audio Rating")
     st.title("🎧 Audio Quality (MOS) Rating Tool")
 
-    # 1. Setup folders and files
+    # 1. Setup folders
     setup_files()
     audio_files = get_audio_files()
 
@@ -113,24 +126,49 @@ def main():
         st.stop()
 
     # 2. Initialize Streamlit's Session State
-    # This is used to remember variables as the user interacts
-    
-    # --- Auto-generate User ID if not present ---
     if 'user_id' not in st.session_state:
         st.session_state.user_id = f"user_{str(uuid.uuid4())[:8]}"
-    # ---
-        
     if 'current_audio_index' not in st.session_state:
         st.session_state.current_audio_index = 0
     if 'ratings_submitted' not in st.session_state:
         st.session_state.ratings_submitted = False
 
-    # 3. User Identification
+    # 3. User Identification & Admin Download
     st.sidebar.header("Your Information")
-    # --- Removed text input, just display the auto-generated ID ---
     st.sidebar.success(f"Rating as: **{st.session_state.user_id}**")
     
-    # --- Removed the check for empty user_id, as it's now auto-generated ---
+    st.sidebar.header("Admin: Download Data")
+    
+    # <--- MODIFIED: Download button for Raw Ratings --->
+    # This now reads from Google Sheets and serves the file
+    try:
+        all_ratings_df = conn.read(worksheet=WORKSHEET_NAME)
+        if not all_ratings_df.empty:
+            # Convert DataFrame to CSV string
+            csv_data = all_ratings_df.to_csv(index=False).encode('utf-8')
+            st.sidebar.download_button(
+                label="Download All Ratings (from Google Sheets)",
+                data=csv_data,
+                file_name="all_mos_ratings.csv",
+                mime="text/csv"
+            )
+        else:
+            st.sidebar.info("No raw ratings in Google Sheet yet.")
+    except Exception as e:
+        st.sidebar.error(f"Could not read from Google Sheet: {e}")
+
+    # <--- MODIFIED: Download button for MOS Summary --->
+    # This part remains the same, as update_mos_summary() creates the local file
+    if MOS_SUMMARY_FILE.exists():
+        with open(MOS_SUMMARY_FILE, "rb") as f:
+            st.sidebar.download_button(
+                label="Download MOS Summary (mos_summary.csv)",
+                data=f,
+                file_name=MOS_SUMMARY_FILE.name,
+                mime="text/csv"
+            )
+    else:
+        st.sidebar.info("No summary generated yet.")
 
 
     # 4. Rating Interface
@@ -143,18 +181,15 @@ def main():
         st.success("🎉 Thank you! You have rated all available audio files.")
         st.balloons()
         
-        # Optionally show the *raw* results, but not the MOS summary
-        if st.checkbox("Show All Submitted Ratings"):
+        # Optionally show the *raw* results
+        if st.checkbox("Show All Submitted Ratings (from Google Sheets)"):
             try:
-                df = pd.read_csv(RATINGS_FILE)
+                # <--- MODIFIED: Read from Google Sheets --->
+                df = conn.read(worksheet=WORKSHEET_NAME)
                 st.dataframe(df)
-                
-                # --- MOS calculation removed from the UI per your request ---
-                
-            except pd.errors.EmptyDataError:
-                st.info("No ratings have been submitted yet.")
+            except Exception as e:
+                st.error(f"Could not read ratings: {e}")
         st.stop()
-
 
     # Get the current file to rate
     current_file_name = audio_files[st.session_state.current_audio_index]
@@ -174,11 +209,9 @@ def main():
         st.stop()
 
     # Rating form
-    # Using a form ensures that the rating is submitted with the button
     with st.form(key="mos_form"):
         st.subheader("Please rate the quality of the audio:")
         
-        # Using radio buttons for the 5-point scale
         rating_label = st.radio(
             label="Rating (1=Bad, 5=Excellent)",
             options=RATING_SCALE.keys(),
@@ -186,15 +219,13 @@ def main():
             horizontal=True
         )
         
-        # Submit button for the form
         submit_button = st.form_submit_button(label="Submit Rating and Go to Next")
 
     # 5. Form Submission Logic
     if submit_button:
-        # Get the numeric rating (e.g., 1, 2, 3, 4, or 5)
         selected_rating = RATING_SCALE[rating_label]
         
-        # Save the rating to the CSV
+        # <--- MODIFIED: This now saves to Google Sheets --->
         save_rating(
             st.session_state.user_id, 
             current_file_name, 
@@ -202,22 +233,16 @@ def main():
         )
         
         st.toast(
-            f"Rating for '{current_file_name}' saved!",
+            f"Rating for '{current_file_name}' saved to Google Sheets!",
             icon="✅"
         )
         
-        # Move to the next file by incrementing the index
         st.session_state.current_audio_index += 1
         
-        # Check if we just finished the last file
         if st.session_state.current_audio_index == len(audio_files):
             st.session_state.ratings_submitted = True
         
-        # Rerun the script to show the next file or the completion message
         st.rerun()
 
 if __name__ == "__main__":
     main()
-
-
-
