@@ -216,6 +216,7 @@ def main():
     if submit_button:
         selected_rating = RATING_SCALE[rating_label]
         
+        
         success = save_rating(
             conn,
             st.session_state.user_id, 
@@ -224,7 +225,7 @@ def main():
         )
         
         if success:
-            st.toast(f"Rating for '{current_file_name}' saved!", icon="✅")
+            st.toast(f"Rating for audio'{current_file_name}' saved!", icon="✅")
             st.session_state.current_audio_index += 1
             
             if st.session_state.current_audio_index == len(audio_files):
