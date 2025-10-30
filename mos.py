@@ -47,15 +47,14 @@ def get_audio_files():
 def save_rating_to_supabase(supabase: Client, user_id, audio_file, rating):
     """Append a new rating to the Supabase table."""
     try:
-        data, error = supabase.table("mos_ratings").insert({
+        response = supabase.table("mos_ratings").insert({
             "user_id": user_id,
             "audio_file": audio_file,
             "rating": rating
-        }, returning="minimal").execute()  # <--- ADD THIS
+        }).execute()
         
-        if error:
-            st.error(f"Error saving rating: {str(error)}")
-            return False
+        # Check if the response indicates success
+        # When using execute(), a successful insert will return data
         return True
     except Exception as e:
         st.error(f"An unexpected error occurred: {e}")
@@ -65,14 +64,8 @@ def save_rating_to_supabase(supabase: Client, user_id, audio_file, rating):
 def get_all_ratings(supabase: Client):
     """Fetches all ratings from the database for display."""
     try:
-        data, error = supabase.table("mos_ratings").select("*").order("created_at", desc=True).execute()
-        
-        if error:
-            # FIX: Convert the error to a string for display
-            st.error(f"Error fetching ratings: {str(error)}")
-            return pd.DataFrame() # Return empty dataframe
-        
-        return pd.DataFrame(data.data)
+        response = supabase.table("mos_ratings").select("*").order("created_at", desc=True).execute()
+        return pd.DataFrame(response.data)
     except Exception as e:
         st.error(f"An unexpected error occurred while fetching data: {e}")
         return pd.DataFrame()
