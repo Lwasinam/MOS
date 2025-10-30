@@ -51,10 +51,9 @@ def save_rating_to_supabase(supabase: Client, user_id, audio_file, rating):
             "user_id": user_id,
             "audio_file": audio_file,
             "rating": rating
-        }).execute()
+        }, returning="minimal").execute()  # <--- ADD THIS
         
         if error:
-            # FIX: Convert the error to a string for display
             st.error(f"Error saving rating: {str(error)}")
             return False
         return True
