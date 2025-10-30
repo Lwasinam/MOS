@@ -54,7 +54,8 @@ def save_rating_to_supabase(supabase: Client, user_id, audio_file, rating):
         }).execute()
         
         if error:
-            st.error(f"Error saving rating: {error.message}")
+            # FIX: Convert the error to a string for display
+            st.error(f"Error saving rating: {str(error)}")
             return False
         return True
     except Exception as e:
@@ -66,8 +67,10 @@ def get_all_ratings(supabase: Client):
     """Fetches all ratings from the database for display."""
     try:
         data, error = supabase.table("mos_ratings").select("*").order("created_at", desc=True).execute()
+        
         if error:
-            st.error(f"Error fetching ratings: {error.message}")
+            # FIX: Convert the error to a string for display
+            st.error(f"Error fetching ratings: {str(error)}")
             return pd.DataFrame() # Return empty dataframe
         
         return pd.DataFrame(data.data)
