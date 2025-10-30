@@ -11,7 +11,7 @@ AUDIO_FOLDER = Path("audio_files")
 MOS_SUMMARY_FILE = Path("mos_summary.csv")
 
 # Add your Google Sheet URL here
-GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1VV_78onqKDKgU3kh8ND8FAd7OU2c5qf89ydJFajAtvk/edit?usp=sharing"
+GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1VV_78onqKDKgU3kh8ND8FAd7OU2c5qf89ydJFajAtvk/edit?gid=0#gid=0"
 WORKSHEET_NAME = "Ratings"
 
 # The 5-point MOS scale
