@@ -58,46 +58,49 @@ def save_rating_to_supabase(supabase: Client, user_id, audio_file, rating):
         st.error(f"An unexpected error occurred: {e}")
         return False
 
-def get_all_ratings(supabase: Client):
-    """Fetches all ratings from the database."""
+def update_mos_for_file(supabase: Client, audio_file):
+    """Update the MOS summary for a specific audio file."""
     try:
-        response = supabase.table("mos_ratings").select("*").execute()
-        return pd.DataFrame(response.data)
-    except Exception as e:
-        st.error(f"An unexpected error occurred while fetching data: {e}")
-        return pd.DataFrame()
-
-def update_mos_summary(supabase: Client):
-    """Calculate and update the MOS summary table."""
-    try:
-        # Get all ratings
-        df = get_all_ratings(supabase)
+        # Get all ratings for this specific audio file
+        response = supabase.table("mos_ratings")\
+            .select("rating")\
+            .eq("audio_file", audio_file)\
+            .execute()
         
-        if df.empty:
+        if not response.data:
             return False
         
-        # Calculate MOS for each audio file
-        mos_summary = df.groupby('audio_file').agg({
-            'rating': ['mean', 'count']
-        }).reset_index()
+        ratings = [r['rating'] for r in response.data]
+        mos_score = sum(ratings) / len(ratings)
+        rating_count = len(ratings)
         
-        mos_summary.columns = ['audio_file', 'mos_score', 'rating_count']
+        # Check if this audio file already has a summary entry
+        existing = supabase.table("mos_summary")\
+            .select("id")\
+            .eq("audio_file", audio_file)\
+            .execute()
         
-        # Clear existing summary data and insert new calculations
-        # Delete all existing records
-        supabase.table("mos_summary").delete().neq('audio_file', '').execute()
-        
-        # Insert updated summary
-        for _, row in mos_summary.iterrows():
+        if existing.data:
+            # Update existing record
+            supabase.table("mos_summary")\
+                .update({
+                    "mos_score": mos_score,
+                    "rating_count": rating_count
+                })\
+                .eq("audio_file", audio_file)\
+                .execute()
+        else:
+            # Insert new record
             supabase.table("mos_summary").insert({
-                "audio_file": row['audio_file'],
-                "mos_score": float(row['mos_score']),
-                "rating_count": int(row['rating_count'])
+                "audio_file": audio_file,
+                "mos_score": mos_score,
+                "rating_count": rating_count
             }).execute()
         
         return True
     except Exception as e:
-        st.error(f"Error updating MOS summary: {e}")
+        # Log error but don't show to user to avoid disruption
+        print(f"Error updating MOS summary: {e}")
         return False
 
 # --- Streamlit App UI ---
@@ -187,13 +190,13 @@ def main():
         )
         
         if success:
-            # Update the MOS summary table
-            update_mos_summary(supabase)
-            
             st.toast(
                 f"Rating for '{current_file_name}' saved!",
                 icon="✅"
             )
+            
+            # Update the MOS summary for this specific file (non-blocking)
+            update_mos_for_file(supabase, current_file_name)
             
             # Move to the next file
             st.session_state.current_audio_index += 1
